@@ -1,14 +1,13 @@
 # comfyui-remote
 
-Run [ComfyUI](https://github.com/comfyanonymous/ComfyUI) on a GPU server at home
-and use it from your laptop with one command. `comfyui-remote` starts ComfyUI as an
-on-demand systemd user service on the server, opens a private SSH tunnel and
-launches the browser. `comfyui-remote stop` shuts it down and releases the GPU
-memory.
+Run [ComfyUI](https://github.com/comfyanonymous/ComfyUI) on a Linux GPU server you
+can reach over SSH and use it in your local browser with one command.
+`comfyui-remote` starts ComfyUI as an on-demand systemd user service on the
+server, opens a private SSH tunnel and launches the browser.
+`comfyui-remote stop` shuts it down and releases the GPU memory.
 
-ComfyUI listens on the server's loopback only, and the tunnel binds to your
-laptop's loopback, so nothing is exposed on the network and no extra
-authentication is needed beyond your SSH key.
+ComfyUI listens only on loopback at both ends of the tunnel, so nothing is
+exposed on the network and no extra authentication is needed beyond your SSH key.
 
 ## Requirements
 
@@ -37,7 +36,7 @@ contain spaces.
 To keep ComfyUI running after you close the SSH session, enable lingering for
 your user once: `sudo loginctl enable-linger $USER`.
 
-On the laptop:
+On the client:
 
 ```sh
 git clone https://github.com/jnersn/comfyui-remote.git
