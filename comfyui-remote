@@ -1,0 +1,125 @@
+#!/usr/bin/env python3
+"""Start ComfyUI on a remote GPU server and open it through a private SSH tunnel.
+
+  comfyui-remote [start]     start the server's ComfyUI service, open the tunnel and the browser
+  comfyui-remote stop        stop the service (releasing GPU memory) and close the tunnel
+  comfyui-remote restart     restart the service, then as start
+  comfyui-remote status      show the service status
+  comfyui-remote logs        follow the service log
+  --no-browser               with start/restart: print the address instead of opening it
+
+Settings come from the environment, or from ~/.config/comfyui-remote/config
+(KEY=value lines; the environment wins):
+
+  COMFYUI_REMOTE_HOST        SSH host or ~/.ssh/config alias of the GPU server (required)
+  COMFYUI_REMOTE_PORT        ComfyUI port on the server (default 8188)
+  COMFYUI_REMOTE_LOCAL_PORT  local end of the tunnel (default: same as the server port)
+  COMFYUI_REMOTE_COMMAND     server-side wrapper, relative to the remote home (default .local/bin/comfyui)
+"""
+import os
+from pathlib import Path
+import shlex
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+import webbrowser
+
+VERSION = '0.1.0'
+COMMANDS = ('start', 'stop', 'restart', 'status', 'logs')
+CONFIG = Path(os.environ.get('XDG_CONFIG_HOME', Path.home() / '.config')) / 'comfyui-remote' / 'config'
+DEFAULTS = {'COMFYUI_REMOTE_PORT': '8188', 'COMFYUI_REMOTE_COMMAND': '.local/bin/comfyui'}
+
+
+def load_settings():
+    settings = dict(DEFAULTS)
+    if CONFIG.exists():
+        for line in CONFIG.read_text().splitlines():
+            key, sep, value = line.strip().partition('=')
+            if sep and not key.startswith('#'):
+                settings[key.strip()] = value.strip().strip('"\'')
+    settings.update({k: v for k, v in os.environ.items() if k.startswith('COMFYUI_REMOTE_')})
+    if not settings.get('COMFYUI_REMOTE_HOST'):
+        raise SystemExit(f'Set COMFYUI_REMOTE_HOST in the environment or in {CONFIG}.')
+    settings.setdefault('COMFYUI_REMOTE_LOCAL_PORT', settings['COMFYUI_REMOTE_PORT'])
+    return settings
+
+
+def control_path(name):
+    """The SSH control socket; a private dir in /tmp when the cache path is too long for a Unix socket."""
+    cache = Path(os.environ.get('XDG_CACHE_HOME', Path.home() / '.cache')) / 'comfyui-remote'
+    if len(str(cache / name)) > 90:
+        cache = Path('/tmp') / f'comfyui-remote-{os.getuid()}'
+    cache.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if cache.stat().st_uid != os.getuid():
+        raise SystemExit(f'{cache} belongs to another user.')
+    cache.chmod(0o700)
+    return str(cache / name)
+
+
+def main():
+    args = sys.argv[1:]
+    if '-h' in args or '--help' in args:
+        print(__doc__.strip())
+        return 0
+    if '--version' in args:
+        print('comfyui-remote', VERSION)
+        return 0
+    open_browser = '--no-browser' not in args
+    args = [arg for arg in args if arg != '--no-browser']
+    command = args[0] if args else 'start'
+    if command not in COMMANDS or len(args) > 1:
+        raise SystemExit('Usage: comfyui-remote [start|stop|restart|status|logs] [--no-browser]')
+
+    settings = load_settings()
+    host = settings['COMFYUI_REMOTE_HOST']
+    port = settings['COMFYUI_REMOTE_PORT']
+    local_port = settings['COMFYUI_REMOTE_LOCAL_PORT']
+    control = control_path(f'{host}-{local_port}.sock')
+    ssh = ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10']
+
+    def remote(action):
+        wrapper = settings['COMFYUI_REMOTE_COMMAND']
+        return subprocess.call(ssh + [host, f'{shlex.quote(wrapper)} {action}'])
+
+    def tunnel_active():
+        return subprocess.run(ssh + ['-S', control, '-O', 'check', host],
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+
+    if command == 'stop':
+        code = remote('stop')
+        if tunnel_active():
+            subprocess.run(ssh + ['-S', control, '-O', 'exit', host], check=False)
+        return code
+    if command in ('status', 'logs'):
+        return remote(command)
+    if remote(command):
+        raise SystemExit(f'Could not start ComfyUI on {host}.')
+    if not tunnel_active():
+        result = subprocess.run(ssh + ['-fNT', '-M', '-S', control,
+                                       '-o', 'ExitOnForwardFailure=yes',
+                                       '-o', 'ServerAliveInterval=30', '-o', 'ServerAliveCountMax=3',
+                                       '-L', f'127.0.0.1:{local_port}:127.0.0.1:{port}', host])
+        if result.returncode:
+            raise SystemExit(f'Could not open the SSH tunnel. Check whether local port {local_port} is already in use.')
+    url = f'http://127.0.0.1:{local_port}'
+    for attempt in range(5):
+        try:
+            with urllib.request.urlopen(url + '/system_stats', timeout=10) as response:
+                if response.status == 200:
+                    break
+        except (urllib.error.URLError, OSError):
+            pass
+        time.sleep(1)
+    else:
+        raise SystemExit('ComfyUI did not answer through the SSH tunnel.')
+    print('ComfyUI:', url)
+    print('Stop and release GPU memory with: comfyui-remote stop')
+    if open_browser:
+        webbrowser.open(url)
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Start and stop the ComfyUI user service on the GPU server; comfyui-remote calls this over SSH.
+set -euo pipefail
+env_file="${XDG_CONFIG_HOME:-$HOME/.config}/comfyui-remote/server.env"
+COMFYUI_PORT=8188
+if [[ -f $env_file ]]; then
+    port=$(sed -n 's/^[[:space:]]*COMFYUI_PORT=["'\'']*\([0-9]*\).*/\1/p' "$env_file" | tail -n 1)
+    COMFYUI_PORT=${port:-$COMFYUI_PORT}
+fi
+case ${1:-start} in
+    start|restart)
+        systemctl --user "${1:-start}" comfyui.service
+        for ((attempt=0; attempt<120; attempt++)); do
+            if curl --silent --fail "http://127.0.0.1:$COMFYUI_PORT/system_stats" >/dev/null; then
+                echo "ComfyUI is ready on http://127.0.0.1:$COMFYUI_PORT (on the server's loopback)."
+                exit 0
+            fi
+            if systemctl --user is-failed --quiet comfyui.service; then break; fi
+            sleep 1
+        done
+        journalctl --user -u comfyui.service -n 35 --no-pager
+        echo 'ComfyUI did not become ready; see comfyui logs.' >&2
+        exit 1
+        ;;
+    stop) systemctl --user stop comfyui.service; echo 'ComfyUI stopped; GPU memory released.' ;;
+    status) systemctl --user status comfyui.service --no-pager ;;
+    logs) exec journalctl --user -u comfyui.service -f ;;
+    *) echo 'Usage: comfyui [start|stop|restart|status|logs]' >&2; exit 2 ;;
+esac

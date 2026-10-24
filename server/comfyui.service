@@ -1,0 +1,23 @@
+[Unit]
+Description=ComfyUI (started on demand by comfyui-remote)
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+# Defaults; override any of them in ~/.config/comfyui-remote/server.env.
+Environment=COMFYUI_DIR=%h/ComfyUI
+Environment=COMFYUI_PORT=8188
+Environment=HF_HUB_DISABLE_TELEMETRY=1
+Environment=DO_NOT_TRACK=1
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-%h/.config/comfyui-remote/server.env
+# Listen on loopback only: the SSH tunnel is the way in. $$ leaves the expansion to the shell;
+# COMFYUI_PYTHON defaults to the venv in COMFYUI_DIR, COMFYUI_ARGS is split into words.
+ExecStart=/bin/sh -c 'cd "$${COMFYUI_DIR}" && exec "$${COMFYUI_PYTHON:-$${COMFYUI_DIR}/.venv/bin/python}" main.py --listen 127.0.0.1 --port "$${COMFYUI_PORT}" --disable-auto-launch $${COMFYUI_ARGS}'
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGINT
+TimeoutStopSec=60
+NoNewPrivileges=true
+UMask=0077
