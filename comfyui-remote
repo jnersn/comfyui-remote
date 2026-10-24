@@ -115,7 +115,7 @@ def main():
     else:
         raise SystemExit('ComfyUI did not answer through the SSH tunnel.')
     print('ComfyUI:', url)
-    print('Stop and release GPU memory with: comfyui-remote stop')
+    print(f'Stop and release GPU memory with: {Path(sys.argv[0]).name} stop')
     if open_browser:
         webbrowser.open(url)
     return 0
